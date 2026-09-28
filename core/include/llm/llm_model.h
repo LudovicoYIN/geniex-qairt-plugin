@@ -316,6 +316,14 @@ class GENIEX_API LLMModel : public Model {
     // for every flat bundle. Resolved by resolveKVLayout().
     std::unordered_map<std::string, int> kv_rebase_;
 
+    struct RecurrentTensorPair {
+        std::string input_name;
+        std::string output_name;
+        size_t      byte_count = 0;
+        size_t      element_count = 0;
+    };
+    std::vector<std::vector<RecurrentTensorPair>> recurrent_state_pairs_;
+
     // True when the primary KV cache is a SCATTER cache: kv_in spans the whole
     // context length and the graph places this pass's fresh KV inside it at the
     // column given by spec_.cache_index_name, instead of concatenating a separate
@@ -364,6 +372,12 @@ class GENIEX_API LLMModel : public Model {
 
     // KV input tensor names across all shards, taken from the resolved KV pairs.
     std::unordered_set<std::string> buildKVInputNameSet() const;
+
+    // Recurrent state inputs are copied verbatim from their matching outputs
+    // and broadcast to every phase/context variant of the owning shard.
+    void updateRecurrentState(size_t shard, size_t phase, size_t cl_idx, bool mirror_prefill_phase = true);
+    void initRecurrentStateBuffers();
+    std::unordered_set<std::string> buildRecurrentStateInputNameSet() const;
 
     // One-shot fill of every KV input buffer with the encoded-zero pattern
     // for its dtype

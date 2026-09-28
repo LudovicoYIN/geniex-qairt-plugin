@@ -56,6 +56,10 @@ class GENIEX_API EmbeddingInputProvider : public InputProvider {
     // tensor_name: name of the graph input to write (default "input_embeds").
     explicit EmbeddingInputProvider(std::string tensor_name = "input_embeds");
 
+    // Uses a bundle-configured pad token for static prefill padding. A negative
+    // value preserves the default of falling back to the first EOS token.
+    EmbeddingInputProvider(std::string tensor_name, int32_t pad_token_override);
+
     // Explicit-config variant for a table that is NOT model_cfg.embedding_path
     // and whose width differs from spec.hidden_size — e.g. Gemma3/4's per-layer
     // embedding stream (`per_layer_inputs`, width = num_layers * per_layer_dim).

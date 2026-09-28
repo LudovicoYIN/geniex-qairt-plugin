@@ -44,7 +44,7 @@ struct GraphNameParts {
 };
 
 bool parseGraphName(const std::string& name, GraphNameParts& out) {
-    static const std::regex re(R"((?:([a-zA-Z]+)_)?ar(\d+)_cl(\d+)_(\d+)_of_(\d+))");
+    static const std::regex re(R"((?:([a-zA-Z][a-zA-Z0-9_]*?)_)?ar(\d+)_cl(\d+)_(\d+)_of_(\d+))");
     std::smatch             m;
     if (!std::regex_match(name, m, re)) return false;
     out.phase_prefix = m[1].matched ? m[1].str() : "";
@@ -538,8 +538,12 @@ std::unique_ptr<InputProvider> makeEmbeddingProvider(
         if (pad < 0) pad = gc.eos_token_ids.empty() ? 0 : gc.eos_token_ids.front();
         return std::make_unique<TokenIdInputProvider>("input_ids", pad);
     }
-    if (first_shard_input == "input_embeds" || first_shard_input == "inputs_embeds") {
-        auto p = std::make_unique<EmbeddingInputProvider>(first_shard_input);
+    const bool external_embedding = gc.embedding_lut_path && !gc.embedding_lut_path->empty();
+    if (first_shard_input == "input_embeds" || first_shard_input == "inputs_embeds" || external_embedding) {
+        if (external_embedding && first_shard_input != "input_embeds" && first_shard_input != "inputs_embeds") {
+            GENIEX_LOG_INFO("llm_spec_loader: binding external embedding LUT to graph input '{}'", first_shard_input);
+        }
+        auto p = std::make_unique<EmbeddingInputProvider>(first_shard_input, gc.pad_token_id);
         // Quantized main LUT (Gemma4 and other large-vocab bundles): mmap +
         // per-row conversion instead of a dequantized in-RAM table.
         if (gc.embedding_quant.quantized()) p->setQuantization(gc.embedding_quant);

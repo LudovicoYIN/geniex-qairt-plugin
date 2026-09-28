@@ -29,6 +29,9 @@ bool endsWithICase(const std::string& path, const std::string& suffix) {
 
 EmbeddingInputProvider::EmbeddingInputProvider(std::string tensor_name) : tensor_name_(std::move(tensor_name)) {}
 
+EmbeddingInputProvider::EmbeddingInputProvider(std::string tensor_name, int32_t pad_token_override)
+    : tensor_name_(std::move(tensor_name)), pad_token_override_(pad_token_override) {}
+
 EmbeddingInputProvider::EmbeddingInputProvider(
     std::string tensor_name, std::string table_path, size_t row_hidden_size, int32_t pad_token_override)
     : tensor_name_(std::move(tensor_name)),

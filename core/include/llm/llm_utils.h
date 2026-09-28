@@ -141,6 +141,7 @@ std::vector<float> get_kv_cache(size_t num_kv_heads, size_t head_dim, size_t kv_
 // callers use this when picking the first non-special input/output of a
 // graph as the shard's hidden-state wiring point.
 GENIEX_API bool isKVTensor(const std::string& name);
+GENIEX_API bool isRecurrentStateTensor(const std::string& name);
 GENIEX_API bool isSpecialTensor(const std::string& name);
 
 }  // namespace geniex
