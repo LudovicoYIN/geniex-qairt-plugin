@@ -147,6 +147,8 @@ struct ParsedGenieConfig {
     std::optional<std::string> perlayer_embedding_lut_path;
     size_t                     perlayer_embedding_size = 0;
     QuantizedLutSpec           perlayer_embedding_quant;
+    size_t rope_dim = 0;
+    std::string rope_freqs_type = "default";
 };
 
 // ── Parsed dialog.sampler block ──────────────────────────────────────────────

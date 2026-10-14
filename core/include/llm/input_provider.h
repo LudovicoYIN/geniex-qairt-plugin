@@ -56,6 +56,10 @@ class GENIEX_API EmbeddingInputProvider : public InputProvider {
     // tensor_name: name of the graph input to write (default "input_embeds").
     explicit EmbeddingInputProvider(std::string tensor_name = "input_embeds");
 
+    // Uses a bundle-configured pad token for static prefill padding. A negative
+    // value preserves the default of falling back to the first EOS token.
+    EmbeddingInputProvider(std::string tensor_name, int32_t pad_token_override);
+
     // Explicit-config variant for a table that is NOT model_cfg.embedding_path
     // and whose width differs from spec.hidden_size — e.g. Gemma3/4's per-layer
     // embedding stream (`per_layer_inputs`, width = num_layers * per_layer_dim).
@@ -210,6 +214,16 @@ class GENIEX_API RoPEInputProvider : public InputProvider {
     RotaryEmbedding rope_;
     std::string     cos_name_;
     std::string     sin_name_;
+};
+
+// Qwen3.5 concatenates two copies of the rotary_dim/2 frequency table.
+class GENIEX_API ConcatRoPEInputProvider : public InputProvider {
+   public:
+    ConcatRoPEInputProvider(size_t rotary_dim, float theta, std::string cos_name, std::string sin_name);
+    void write(Graph& g, const LLMRunContext& ctx) override;
+   private:
+    RotaryEmbedding rope_;
+    std::string cos_name_, sin_name_;
 };
 
 // LongRoPE with dynamic scaling and per-dimension extension factors.

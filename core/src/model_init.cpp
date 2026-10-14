@@ -7,6 +7,7 @@
 
 #include <cstdarg>
 #include <cstring>
+#include <cstdlib>
 
 #include "QnnConfig.hpp"
 #include "llm/llm_spec_loader.h"  // parseHtpCoreCount, resolveHtpPerfConfig
@@ -170,7 +171,7 @@ bool Model::initialize(const QnnRuntimeConfig& runtime_cfg, const ModelConfig& m
         {},
         false,
         false,
-        static_cast<uint32_t>(resolved_cfg.log_level),
+        static_cast<uint32_t>(std::getenv("GENIEX_QNN_LOG_WARN") ? QNN_LOG_LEVEL_WARN : resolved_cfg.log_level),
         qnnLogCallback,
         model_cfg.enable_optrace,
         model_cfg.optrace_output_path);

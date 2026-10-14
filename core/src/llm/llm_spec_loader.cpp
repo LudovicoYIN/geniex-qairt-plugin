@@ -44,7 +44,7 @@ struct GraphNameParts {
 };
 
 bool parseGraphName(const std::string& name, GraphNameParts& out) {
-    static const std::regex re(R"((?:([a-zA-Z]+)_)?ar(\d+)_cl(\d+)_(\d+)_of_(\d+))");
+    static const std::regex re(R"((?:([a-zA-Z][a-zA-Z0-9_]*?)_)?ar(\d+)_cl(\d+)_(\d+)_of_(\d+))");
     std::smatch             m;
     if (!std::regex_match(name, m, re)) return false;
     out.phase_prefix = m[1].matched ? m[1].str() : "";
@@ -391,6 +391,8 @@ ParsedGenieConfig parseGenieConfig(const std::filesystem::path& bundle_dir) {
                 engine.at("model").at("positional-encoding").is_object()) {
                 const auto& pe = engine.at("model").at("positional-encoding");
                 out.rope_theta = pe.value("rope-theta", 10000.0f);
+                out.rope_dim = pe.value("rope-dim", size_t{0});
+                out.rope_freqs_type = pe.value("rope-freqs-type", std::string{"default"});
                 if (pe.contains("rope-scaling") && pe.at("rope-scaling").is_object()) {
                     out.rope_scaling = parseRopeScaling(pe.at("rope-scaling"));
                 }
@@ -481,6 +483,13 @@ LLMSpec buildSpecSkeleton(const ParsedGenieConfig& gc) {
 // ─────────────────────────────────────────────────────────────────────────────
 std::unique_ptr<InputProvider> makeRoPEProvider(
     size_t head_dim, const ParsedGenieConfig& gc, std::string cos_name, std::string sin_name) {
+    if (gc.rope_freqs_type == "concat") {
+        if (!std::holds_alternative<StandardRope>(gc.rope_scaling))
+            throw std::runtime_error("concat RoPE with scaling is not supported");
+        const size_t dim = gc.rope_dim ? gc.rope_dim : head_dim / 2;
+        GENIEX_LOG_INFO("llm: concat RoPE provider (rope-dim={})", dim);
+        return std::make_unique<ConcatRoPEInputProvider>(dim, gc.rope_theta, cos_name, sin_name);
+    }
     return std::visit(
         [&](const auto& s) -> std::unique_ptr<InputProvider> {
             using T = std::decay_t<decltype(s)>;
@@ -538,8 +547,12 @@ std::unique_ptr<InputProvider> makeEmbeddingProvider(
         if (pad < 0) pad = gc.eos_token_ids.empty() ? 0 : gc.eos_token_ids.front();
         return std::make_unique<TokenIdInputProvider>("input_ids", pad);
     }
-    if (first_shard_input == "input_embeds" || first_shard_input == "inputs_embeds") {
-        auto p = std::make_unique<EmbeddingInputProvider>(first_shard_input);
+    const bool external_embedding = gc.embedding_lut_path && !gc.embedding_lut_path->empty();
+    if (first_shard_input == "input_embeds" || first_shard_input == "inputs_embeds" || external_embedding) {
+        if (external_embedding && first_shard_input != "input_embeds" && first_shard_input != "inputs_embeds") {
+            GENIEX_LOG_INFO("llm_spec_loader: binding external embedding LUT to graph input '{}'", first_shard_input);
+        }
+        auto p = std::make_unique<EmbeddingInputProvider>(first_shard_input, gc.pad_token_id);
         // Quantized main LUT (Gemma4 and other large-vocab bundles): mmap +
         // per-row conversion instead of a dequantized in-RAM table.
         if (gc.embedding_quant.quantized()) p->setQuantization(gc.embedding_quant);

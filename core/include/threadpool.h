@@ -47,6 +47,8 @@ class ThreadPool {
 
     size_t size() const { return threads_.size(); }
     bool   started() const { return !threads_.empty(); }
+    // Change idle policy under the queue mutex, returning the previous policy.
+    bool setPolling(bool enabled);
 
     // Clock keeper: spin up / tear down `n_spinners` busy-wait threads pinned to
     // `cpu_mask` (0 = no pin) that keep the CPU cluster from down-clocking.

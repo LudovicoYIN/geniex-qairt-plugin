@@ -31,8 +31,16 @@ void Model::applyConnections(const std::vector<Connection>& connections) {
             void*       dst = graphs_[conn.dst_graph_idx].inputPtr(conn.dst_tensor_name);
 
             if (src == dst) continue;  // shared buffer — no copy needed
-            const auto& spec = graphs_[conn.src_graph_idx].outputSpec(conn.src_tensor_name);
-            graphs_[conn.dst_graph_idx].write(conn.dst_tensor_name, src, spec.byteCount());
+            const auto& output = graphs_[conn.src_graph_idx].outputSpec(conn.src_tensor_name);
+            const auto& input = graphs_[conn.dst_graph_idx].inputSpec(conn.dst_tensor_name);
+            if (output.dtype == input.dtype && output.quant_scale == input.quant_scale &&
+                output.quant_offset == input.quant_offset && output.axis_quant == input.axis_quant) {
+                graphs_[conn.dst_graph_idx].write(conn.dst_tensor_name, src, output.byteCount());
+            } else {
+                std::vector<float> values(output.elementCount());
+                graphs_[conn.src_graph_idx].read(conn.src_tensor_name, values.data(), values.size());
+                graphs_[conn.dst_graph_idx].write(conn.dst_tensor_name, values.data(), values.size());
+            }
         } catch (const std::exception& e) {
             throw std::runtime_error("applyConnections failed: graph[" + std::to_string(conn.src_graph_idx) + "]." +
                                      conn.src_tensor_name + " -> graph[" + std::to_string(conn.dst_graph_idx) + "]." +

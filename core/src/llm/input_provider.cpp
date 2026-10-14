@@ -29,6 +29,9 @@ bool endsWithICase(const std::string& path, const std::string& suffix) {
 
 EmbeddingInputProvider::EmbeddingInputProvider(std::string tensor_name) : tensor_name_(std::move(tensor_name)) {}
 
+EmbeddingInputProvider::EmbeddingInputProvider(std::string tensor_name, int32_t pad_token_override)
+    : tensor_name_(std::move(tensor_name)), pad_token_override_(pad_token_override) {}
+
 EmbeddingInputProvider::EmbeddingInputProvider(
     std::string tensor_name, std::string table_path, size_t row_hidden_size, int32_t pad_token_override)
     : tensor_name_(std::move(tensor_name)),
@@ -348,6 +351,56 @@ void RoPEInputProvider::write(Graph& g, const LLMRunContext& ctx) {
     auto [cos_vec, sin_vec] = rope_.forward(paddedPositionIds(ctx.n_past, ctx.curr_len, rows));
     if (has_cos) g.write(cos_name_, cos_vec.data(), cos_vec.size());
     if (has_sin) g.write(sin_name_, sin_vec.data(), sin_vec.size());
+}
+
+ConcatRoPEInputProvider::ConcatRoPEInputProvider(
+    size_t rotary_dim, float theta, std::string cos_name, std::string sin_name)
+    : rope_(rotary_dim, theta), cos_name_(std::move(cos_name)), sin_name_(std::move(sin_name)) {
+    if (rotary_dim == 0 || rotary_dim % 2) throw std::invalid_argument("concat RoPE requires a positive even rope-dim");
+}
+
+void ConcatRoPEInputProvider::write(Graph& g, const LLMRunContext& ctx) {
+    const bool has_cos = g.hasInput(cos_name_), has_sin = g.hasInput(sin_name_);
+    if (!has_cos && !has_sin) return;
+    const size_t half = rope_.halfDim(), width = half * 2;
+    for (const auto* name : {&cos_name_, &sin_name_}) {
+        if (g.hasInput(*name) && g.inputSpec(*name).shape.back() != width)
+            throw std::runtime_error("concat RoPE input width differs from rope-dim: " + *name);
+    }
+    const size_t rows = ropeCapacityRows(g, has_cos ? cos_name_ : sin_name_, width, ctx.curr_len);
+    auto [cos, sin] = rope_.forward(paddedPositionIds(ctx.n_past, ctx.curr_len, rows));
+    std::vector<double> full_cos(rows * width), full_sin(rows * width);
+    for (size_t row = 0; row < rows; ++row) {
+        for (size_t repeat = 0; repeat < 2; ++repeat) {
+            std::copy_n(cos.data() + row * half, half, full_cos.data() + row * width + repeat * half);
+            std::copy_n(sin.data() + row * half, half, full_sin.data() + row * width + repeat * half);
+        }
+    }
+    if (std::getenv("GENIEX_CONCAT_OFFICIAL_QUANT") && has_cos) {
+        const auto& spec = g.inputSpec(cos_name_);
+        const double scale = spec.quant_scale;
+        const double offset = spec.quant_offset;
+        auto official_write = [&](const std::string& name, const std::vector<double>& values) {
+            if (spec.dtype == QNN_DATATYPE_UFIXED_POINT_16) {
+                std::vector<uint16_t> encoded(values.size());
+                for (size_t i = 0; i < values.size(); ++i)
+                    encoded[i] = static_cast<uint16_t>(std::clamp(values[i] / scale - offset, 0.0, 65535.0));
+                g.write(name, static_cast<const void*>(encoded.data()), encoded.size() * sizeof(uint16_t));
+            } else if (spec.dtype == QNN_DATATYPE_UFIXED_POINT_8) {
+                std::vector<uint8_t> encoded(values.size());
+                for (size_t i = 0; i < values.size(); ++i)
+                    encoded[i] = static_cast<uint8_t>(std::clamp(values[i] / scale - offset, 0.0, 255.0));
+                g.write(name, static_cast<const void*>(encoded.data()), encoded.size());
+            } else {
+                g.write(name, values.data(), values.size());
+            }
+        };
+        official_write(cos_name_, full_cos);
+        if (has_sin) official_write(sin_name_, full_sin);
+        return;
+    }
+    if (has_cos) g.write(cos_name_, full_cos.data(), full_cos.size(), RoundingMode::Nearest);
+    if (has_sin) g.write(sin_name_, full_sin.data(), full_sin.size(), RoundingMode::Nearest);
 }
 
 LongRoPEInputProvider::LongRoPEInputProvider(size_t head_dim, float theta, std::vector<float> ext_factors,

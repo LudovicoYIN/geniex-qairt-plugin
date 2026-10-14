@@ -4,9 +4,15 @@
 #include "graph.h"
 
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <stdexcept>
 #include <vector>
+#include <fstream>
+#include <filesystem>
+#if defined(__aarch64__)
+#include <arm_neon.h>
+#endif
 
 #include "QnnTypeMacros.hpp"
 #include "QnnTypes.h"
@@ -44,6 +50,24 @@ size_t argmaxRaw(const void* buf, Qnn_DataType_t dtype, size_t n) {
         case QNN_DATATYPE_FLOAT_32:
             return scan(static_cast<const float*>(buf));
         case QNN_DATATYPE_UFIXED_POINT_16:
+#if defined(__aarch64__)
+            if (!std::getenv("GENIEX_SCALAR_ARGMAX")) {
+                const auto* p = static_cast<const uint16_t*>(buf);
+                uint16x8_t vmax = vdupq_n_u16(0);
+                size_t i = 0;
+                for (; i + 8 <= n; i += 8) vmax = vmaxq_u16(vmax, vld1q_u16(p + i));
+                uint16_t maximum = vmaxvq_u16(vmax);
+                for (; i < n; ++i) maximum = std::max(maximum, p[i]);
+                // A second pass preserves the scalar path's first-index tie break.
+                for (i = 0; i + 8 <= n; i += 8) {
+                    if (vmaxvq_u16(vceqq_u16(vld1q_u16(p + i), vdupq_n_u16(maximum)))) {
+                        for (size_t j = i; j < i + 8; ++j) if (p[j] == maximum) return j;
+                    }
+                }
+                for (; i < n; ++i) if (p[i] == maximum) return i;
+                return 0;
+            }
+#endif
             return scan(static_cast<const uint16_t*>(buf));
         case QNN_DATATYPE_UFIXED_POINT_8:
             return scan(static_cast<const uint8_t*>(buf));
@@ -481,6 +505,13 @@ size_t Graph::argmaxOutput(const std::string& name, size_t n, size_t elem_offset
     const auto          dtype = QNN_TENSOR_GET_DATA_TYPE(t);
     const size_t        elem  = outputSpec(name).elementSize();
     const auto*         base  = static_cast<const uint8_t*>(output_buffer_ptrs_.at(name)) + elem_offset * elem;
+    // Diagnostic/runtime option: bulk-copy registered QNN memory before CPU
+    // scanning. The bytes and tie-breaking are identical to the direct path.
+    if (std::getenv("GENIEX_LOGITS_COPY")) {
+        std::vector<uint64_t> cached((n * elem + sizeof(uint64_t) - 1) / sizeof(uint64_t));
+        std::memcpy(cached.data(), base, n * elem);
+        return argmaxRaw(cached.data(), dtype, n);
+    }
     return argmaxRaw(base, dtype, n);
 }
 
@@ -491,6 +522,17 @@ const void* Graph::inputPtr(const std::string& name) const { return input_buffer
 const void* Graph::outputPtr(const std::string& name) const { return output_buffer_ptrs_.at(name); }
 
 bool Graph::execute(std::map<std::string, std::pair<double, uint16_t>>& time_log) {
+    if (const char* root = std::getenv("GENIEX_DUMP_RAW_INPUTS")) {
+        const auto dir = std::filesystem::path(root) / name_;
+        if (!std::filesystem::exists(dir)) {
+            std::filesystem::create_directories(dir);
+            for (const auto& spec : inputSpecs()) {
+                std::ofstream out(dir / spec.name, std::ios::binary);
+                out.write(static_cast<const char*>(inputPtr(spec.name)), spec.byteCount());
+                if (!out) throw std::runtime_error("failed to dump raw input: " + spec.name);
+            }
+        }
+    }
 #ifdef GENIEX_DEBUG
     const char* dump_dir       = std::getenv("GENIEX_DUMP_TENSOR_IO");
     bool        dump_this_call = false;

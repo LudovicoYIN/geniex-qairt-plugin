@@ -62,6 +62,17 @@ void ThreadPool::wait() {
     }
 }
 
+bool ThreadPool::setPolling(bool enabled) {
+    bool previous;
+    {
+        std::lock_guard<std::mutex> lock(mutex_);
+        previous = poll_;
+        poll_ = enabled;
+    }
+    job_cv_.notify_all();
+    return previous;
+}
+
 void ThreadPool::loop() {
 #if defined(__linux__)
     if (cpu_mask_ != 0) {
@@ -76,15 +87,14 @@ void ThreadPool::loop() {
         std::function<void()> job;
         {
             std::unique_lock<std::mutex> lock(mutex_);
-            if (poll_) {
-                // Busy-spin: re-check under lock without blocking on the cv.
-                while (!terminate_ && jobs_.empty()) {
+            while (!terminate_ && jobs_.empty()) {
+                if (poll_) {
                     lock.unlock();
                     std::this_thread::yield();
                     lock.lock();
+                } else {
+                    job_cv_.wait(lock, [this] { return terminate_ || !jobs_.empty() || poll_; });
                 }
-            } else {
-                job_cv_.wait(lock, [this] { return terminate_ || !jobs_.empty(); });
             }
             if (terminate_ && jobs_.empty()) return;
             job = std::move(jobs_.front());

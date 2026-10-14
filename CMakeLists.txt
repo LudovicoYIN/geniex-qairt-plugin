@@ -24,7 +24,13 @@ if(GENIEX_BUILD_VLM)
     set(GENIEXPROC_ENABLE_VISION ON CACHE BOOL "" FORCE)
 endif()
 set(GENIEXPROC_BUILD_SHARED_LIBS ON CACHE BOOL "" FORCE)
-add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third-party/geniex-proc third-party/geniex-proc)
+if(GENIEX_PREBUILT_PROC)
+    add_library(geniex-proc SHARED IMPORTED GLOBAL)
+    set_target_properties(geniex-proc PROPERTIES IMPORTED_LOCATION "${GENIEX_PREBUILT_PROC}"
+        INTERFACE_INCLUDE_DIRECTORIES "${CMAKE_CURRENT_SOURCE_DIR}/third-party/geniex-proc/include;${CMAKE_CURRENT_SOURCE_DIR}/third-party/geniex-proc/third-party/xtensor/include;${CMAKE_CURRENT_SOURCE_DIR}/third-party/geniex-proc/third-party/xtl/include")
+else()
+    add_subdirectory(${CMAKE_CURRENT_SOURCE_DIR}/third-party/geniex-proc third-party/geniex-proc)
+endif()
 
 # ── Compile definitions ───────────────────────────────────────────────────────
 set(GENIEX_COMPILE_DEFS

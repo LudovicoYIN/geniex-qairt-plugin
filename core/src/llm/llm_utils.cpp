@@ -19,11 +19,21 @@ bool isKVTensor(const std::string& s) {
     return has_inout_suffix && (s.find("key") != std::string::npos || s.find("value") != std::string::npos);
 }
 
+bool isRecurrentStateTensor(const std::string& name) {
+    constexpr const char* prefix = "recurrent_state_";
+    if (name.rfind(prefix, 0) != 0 && name.rfind("conv_state_", 0) != 0) return false;
+    return (name.size() >= 3 && name.compare(name.size() - 3, 3, "_in") == 0) ||
+           (name.size() >= 4 && name.compare(name.size() - 4, 4, "_out") == 0);
+}
+
 bool isSpecialTensor(const std::string& name) {
     // Named non-hidden-state tensors that currently appear in shipped bundles.
     // Add more as new bundles introduce them.
     static const std::unordered_set<std::string> kNamed = {
         "attention_mask",
+        "cache_index",
+        "linear_attn_mask",
+        "conv_states_insert_index",
         "position_ids",
         "position_ids_cos",
         "position_ids_sin",
@@ -44,7 +54,7 @@ bool isSpecialTensor(const std::string& name) {
     // state). Treat like a special input so shard-0's hidden-state detection
     // still picks inputs_embeds.
     if (name == "per_layer_inputs") return true;
-    return kNamed.count(name) > 0 || isKVTensor(name);
+    return kNamed.count(name) > 0 || isKVTensor(name) || isRecurrentStateTensor(name);
 }
 
 RotaryEmbedding::RotaryEmbedding(size_t head_dim, float theta) : half_dim_(head_dim / 2) {
